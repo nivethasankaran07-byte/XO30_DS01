@@ -1,6 +1,6 @@
 """
 PS01 — Explainable Predictive Equipment Health System
-=====================================================
+====================================================
 Includes Surprise Challenge 1:
 - Asymmetric Cost Optimization (Missed Failure FN = 50x False Alarm FP)
 - Expected Cost per 1,000 predictions metric
