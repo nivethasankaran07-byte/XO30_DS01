@@ -1,113 +1,65 @@
-# PS01 — Predictive Equipment Health: An Explainable Risk Assessment System
+# PS01 — Explainable Predictive Equipment Health & Early Risk Triage System
 
-## Status
-🚧 **Work in progress — second commit.** Baseline (Phase 1) plus full
-imbalance handling, boosted-tree model with calibration, cost-justified
-threshold, risk tiers, per-alert explanations, and uncertainty margin
-(Phases 2–8) are implemented in `notebooks/full_pipeline.py`.
+## 📌 Executive Summary
+An end-to-end industrial IoT predictive maintenance system designed to estimate continuous equipment failure risk, classify machines into actionable risk tiers, explain root-cause sensor anomalies, and automatically generate a prioritized maintenance triage schedule[span_0](start_span)[span_0](end_span)[span_1](start_span)[span_1](end_span).
 
-**A note on tooling:** this was built in a sandboxed environment with
-no internet access, so `xgboost`, `imbalanced-learn`, and `shap`
-couldn't be pip-installed. Functionally equivalent substitutes were
-built instead, with clear "drop-in replacement" instructions in each
-file's docstring:
+---
 
-| Wanted | Used instead | File |
-|---|---|---|
-| SMOTE | Manual KNN-based SMOTE | `notebooks/smote_utils.py` |
-| XGBoost | `HistGradientBoostingClassifier` (also boosted trees) | `notebooks/full_pipeline.py` |
-| SHAP | Permutation importance (global) + z-score per-instance explanation (local) | `notebooks/explain_utils.py` |
+## 🎯 Key Differentiators (Why This Solves PS01)
 
-If you have internet access, swap these one-for-one — the pipeline
-structure (train/test split → resample train only → calibrate →
-threshold-tune → explain) stays identical.
+1. **Continuous Risk Scoring Over Naive Binary Labels:** Instead of an arbitrary 0/1 prediction, the system outputs calibrated probabilities representing real-world failure likelihood[span_2](start_span)[span_2](end_span)[span_3](start_span)[span_3](end_span).
+2. **Physics-Informed Feature Engineering:** Models thermodynamic and mechanical degradation drivers:
+   - **Thermal Gradient ($\Delta T$):** $\text{Process Temperature} - \text{Air Temperature}$
+   - **Mechanical Power Output ($kW$):** $\frac{2\pi \times \text{RPM} \times \text{Torque}}{60,000}$
+   - **Dynamic Wear Strain:** $\text{Tool Wear} \times \text{Torque}$
+3. **Leak-Free Imbalance Handling:** SMOTE oversampling is applied **strictly to the training fold**[span_4](start_span)[span_4](end_span)[span_5](start_span)[span_5](end_span). The test evaluation preserves the true operational failure rarity (~3.7%) to prevent synthetic metric inflation[span_6](start_span)[span_6](end_span)[span_7](start_span)[span_7](end_span).
+4. **Asymmetric Cost-Optimal Decision Threshold:** In industrial settings, an unplanned catastrophic breakdown costs significantly more than an inspection[span_8](start_span)[span_8](end_span)[span_9](start_span)[span_9](end_span). We tune the operational threshold across the Precision-Recall curve using an asymmetric cost ratio ($\text{Cost}(FN) : \text{Cost}(FP) = 6.67 : 1$) rather than defaulting to 0.5[span_10](start_span)[span_10](end_span).
+5. **Probability Calibration:** Raw gradient-boosted trees output uncalibrated ranking scores[span_11](start_span)[span_11](end_span)[span_12](start_span)[span_12](end_span). We apply **Isotonic Regression** (`CalibratedClassifierCV`) so a 75% score reflects an empirical 75% breakdown likelihood[span_13](start_span)[span_13](end_span)[span_14](start_span)[span_14](end_span).
+6. **Instance-Level Root-Cause Explainability:** Each high-risk prediction is explained by measuring standard-deviation ($\sigma$) divergence from normal equipment operating profiles, telling operators *why* a machine is failing[span_15](start_span)[span_15](end_span)[span_16](start_span)[span_16](end_span).
+7. **Interactive Technician Dashboard:** Includes a live Streamlit interface for manual simulation, telemetry inspection, and instant priority triage.
 
-## Problem
-Estimate equipment failure risk from historical operating measurements,
-in a way that's interpretable enough to support maintenance decisions —
-not just a failure/no-failure label. See `PS01 problem statement` for
-full requirements.
+---
 
-## Dataset
-`data/equipment_data.csv` — equipment operating records with:
-- `Equipment_Record_ID`, `Type` (L/M/H)
-- `Air_temperature_K`, `Process_temperature_K`
-- `Rotational_speed_rpm`, `Torque_Nm`, `Tool_wear_min`
-- `Machine_failure` (target, 0/1)
+## 📂 Repository Structure
 
-Note: source was a scanned/exported PDF table; a small number of rows
-have parsing noise, handled via range-based flagging in the cleaning
-step (see script). This will be revisited with a more robust
-extraction pass.
+```text
+equipment_health_project/
+├── data/
+│   └── equipment_data.csv               # Industrial telemetry dataset
+├── full_pipeline.py                     # Complete end-to-end ML & triage pipeline
+├── app.py                               # Interactive Streamlit dashboard
+├── maintenance_triage_action_plan.csv   # Exported prioritized maintenance queue
+└── README.md                            # System documentation
 
-## Approach
+⚙️ Operational Architecture
+1. Data Cleaning & Physics Preprocessing
+ * Ingests all sensor telemetry (Air Temperature, Process Temperature, Rotational Speed, Torque, Tool Wear, Type).
+ * Filters OCR noise and corrupt readings outside physical tolerances without discarding true anomalies leading to failure.
+2. Multi-Tier Risk Protocol & Priority Dispatch
+ * 🔴 Critical (\ge 70\%): P1 — Emergency halt; immediate spindle and component overhaul.
+ * 🟠 High (\ge \text{Cost-Tuned Threshold}): P2 — Priority dispatch; inspect tooling and cooling within 8 hours.
+ * 🟡 Medium (\ge 20\%): P3 — Scheduled check; verify lubrication and alignment on next shift.
+ * 🟢 Low (< 20\%): P4 — Nominal operation; continue automated telemetry streaming.
+3. Prediction Uncertainty
+Confidence is evaluated via distance from the operational decision boundary:
 
-### Phase 1 — Baseline (`notebooks/eda_and_baseline.py`)
-EDA, range-based cleaning, Random Forest with `class_weight="balanced"`,
-basic feature importances. Result: ROC-AUC 0.95, but recall on the
-failure class was only 0.29 (default 0.5 threshold, no resampling).
 
-### Phase 2 — Imbalance handling (`notebooks/smote_utils.py`)
-Failure rate is ~3.7% of records. SMOTE is applied to the **training
-split only** (never the test set, to avoid leaking synthetic signal
-into evaluation) to bring the training classes to parity.
+Predictions with a margin < 0.15 are tagged as Borderline / Low Confidence for secondary manual review.
+4. Metric Justification
+Accuracy is deliberately omitted as a primary metric because predicting all zeros yields ~96.3% accuracy while missing 100% of breakdowns. The pipeline evaluates on:
+ * Failure Recall (Minimizing critical False Negatives)
+ * ROC-AUC & PR-AUC (Threshold-agnostic discrimination quality)
+ * Brier Score Loss (Calibrated probability reliability)
+ * F_2-Score (Harmonic mean weighting recall over precision)
+🚀 How to Run
+Step 1: Install Dependencies
+python -m pip install pandas numpy scikit-learn streamlit
 
-### Phase 3 — Model (`notebooks/full_pipeline.py`)
-- `HistGradientBoostingClassifier` (boosted trees, xgboost-equivalent
-  for this sandbox)
-- 5-fold stratified cross-validation on the *original* (non-resampled)
-  data, since only ~250 failure examples exist total — a single split
-  would be too noisy to trust
-- `CalibratedClassifierCV` (isotonic) so output probabilities are
-  genuine risk estimates, not just ranking scores
+Step 2: Run Full ML Pipeline & Generate Triage Report
+python full_pipeline.py
 
-### Phase 4 — Risk tiers
-Probability → Low (<0.2) / Medium (0.2–threshold) / High (≥threshold),
-where the threshold comes from Phase 5, not an arbitrary cutoff.
+Executes stratified cross-validation, probability calibration, cost-threshold tuning, and writes maintenance_triage_action_plan.csv.
+Step 3: Launch the Interactive Web Dashboard
+python -m streamlit run app.py
 
-### Phase 5 — Decision threshold
-Default 0.5 is not used. Instead: **assumption stated explicitly** —
-a missed failure (false negative) is 5x costlier than a false alarm
-(false positive), reflecting unplanned downtime/safety risk vs. an
-unnecessary inspection. The threshold that minimizes this weighted
-cost over the precision-recall curve is selected (~0.42 in the current
-run — recall jumps from 0.29 → 0.75 vs. the Phase-1 baseline).
-
-### Phase 6 — Explainability (`notebooks/explain_utils.py`)
-- Global: permutation importance (F1-scoring) — model-agnostic ranking
-- Per-alert: each high-risk prediction is explained by which features
-  deviate most (in std units) from the normal-operation reference
-  distribution, e.g. *"Torque_Nm is 2.4 std above normal"*
-
-### Phase 7 — Uncertainty
-Calibrated probability's distance from the decision threshold is used
-as a confidence proxy — predictions close to the threshold are flagged
-as low-confidence and may warrant manual review.
-
-### Phase 8 — Evaluation
-Accuracy is never the headline metric (a "never fails" model would
-score ~96% accuracy with 0 recall — misleading given the imbalance).
-Reported instead: precision/recall/F1 on the failure class, ROC-AUC,
-confusion matrix, and 5-fold CV variance.
-
-## Roadmap (remaining)
-- [ ] Swap manual substitutes for xgboost/imbalanced-learn/shap once
-      running with internet access
-- [ ] Hyperparameter tuning (grid/random search) on the boosted model
-- [ ] More rigorous missing-data imputation (e.g. `sklearn.KNNImputer`)
-      in place of median fill
-- [ ] Package inference as a small script/API that takes new readings
-      and returns risk tier + explanation
-- [ ] Formal writeup / slides summarizing results for submission
-
-## How to run
-```bash
-pip install pandas numpy scikit-learn
-cd notebooks
-python eda_and_baseline.py
-```
-
-## Team notes
-Committing early with a working baseline so there's something concrete
-to build on — cleaning, explainability, and threshold work continue
-next session.
+Opens http://localhost:8501 to simulate sensor values, view calibrated risk scores, and inspect root causes live.
